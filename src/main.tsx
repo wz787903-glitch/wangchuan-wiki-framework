@@ -1,0 +1,53 @@
+import { StrictMode, useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { chapters, entries, members, defaultTeam } from './data';
+import type { Chapter } from './data';
+import { answerAndAdvance, emptyQuiz, isComplete, restoreQuiz, score } from './quiz';
+import { emptyDraft, restoreDraft, stringList, useStored } from './storage';
+import './style.css';
+const routes = ['资料', '课程', '小队', '共创'] as const;
+const routeKeys = ['atlas', 'learn', 'team', 'contribute'];
+function routeIndex() { const index = routeKeys.indexOf(location.hash.slice(1)); return index < 0 ? 0 : index; }
+function SaveWarning({ show }: {
+    show: boolean;
+}) { return show ? <p role="alert" className="notice">浏览器无法保存记录，本次修改仅在页面打开期间有效。</p> : null; }
+function Atlas() {
+    const [query, setQuery] = useState(''), [category, setCategory] = useState('全部'), [onlySaved, setOnlySaved] = useState(false), [active, setActive] = useState<string | null>(null);
+    const [saved, setSaved, failed] = useStored('wiki-demo:favorites', [], stringList);
+    const selected = entries.find(e => e.id === active);
+    const filtered = entries.filter(e => (category === '全部' || category === e.category) && (!onlySaved || saved.includes(e.id)) && (e.name + e.summary).includes(query.trim()));
+    return <><div className="section-heading"><div><span className="eyebrow">可检索的资料</span><h1>资料馆</h1></div><p>全部为虚构示例，无需登录即可体验。</p></div><SaveWarning show={failed}/>{selected ? <article className="panel detail"><button onClick={() => setActive(null)}>← 返回列表</button><p className="tag">{selected.category}</p><h2>{selected.name}</h2>{selected.body.map((p, i) => <p key={i}>{p}</p>)}<p className="muted">来源：本框架原创演示文本。</p></article> : <><div className="filters"><label>搜索资料<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="名称或关键词"/></label><label>分类<select value={category} onChange={e => setCategory(e.target.value)}>{['全部', ...new Set(entries.map(e => e.category))].map(c => <option key={c}>{c}</option>)}</select></label><label className="check"><input type="checkbox" checked={onlySaved} onChange={e => setOnlySaved(e.target.checked)}/>只看收藏</label></div><p className="muted" role="status">找到 {filtered.length} 条资料</p><div className="grid">{filtered.map(entry => <article className="panel entry" key={entry.id}><span className="tag">{entry.category}</span><h2><button className="text-link" onClick={() => setActive(entry.id)}>{entry.name}</button></h2><p>{entry.summary}</p><div className="card-footer"><button onClick={() => setActive(entry.id)}>查看详情 →</button><button aria-label={`收藏${entry.name}`} aria-pressed={saved.includes(entry.id)} onClick={() => setSaved(s => s.includes(entry.id) ? s.filter(x => x !== entry.id) : [...s, entry.id])}>{saved.includes(entry.id) ? '已收藏' : '收藏'}</button></div></article>)}</div>{!filtered.length && <p className="panel">没有找到匹配资料，试试其他关键词。</p>}</>}</>;
+}
+function ChapterReader({ chapter }: {
+    chapter: Chapter;
+}) {
+    const [lesson, setLesson] = useState(0), [testing, setTesting] = useState(false);
+    const [read, setRead, readFailed] = useStored<string[]>('wiki-demo:read:' + chapter.id, [], stringList);
+    const [quiz, setQuiz, quizFailed] = useStored('wiki-demo:quiz:' + chapter.id, emptyQuiz(), v => restoreQuiz(v, chapter.questions));
+    const [wrongOnly, setWrongOnly] = useState(false);
+    const heading = useRef<HTMLHeadingElement>(null);
+    useEffect(() => { if (testing && !quiz.submitted)
+        heading.current?.focus(); }, [testing, quiz.cursor, quiz.submitted]);
+    const current = chapter.lessons[lesson], q = chapter.questions[quiz.cursor];
+    return <><div className="toolbar"><span>已读 {chapter.lessons.filter(l => read.includes(l.id)).length} / {chapter.lessons.length}</span><button onClick={() => setTesting(!testing)}>{testing ? '返回阅读' : '本章测验'}</button></div><SaveWarning show={readFailed || quizFailed}/>{!testing ? <div className="reader"><nav aria-label="本章目录">{chapter.lessons.map((item, index) => <button key={item.id} aria-current={index === lesson ? 'step' : undefined} onClick={() => setLesson(index)}>{item.title}{read.includes(item.id) ? ' · 已读' : ''}</button>)}</nav><article className="panel"><span className="eyebrow">{lesson + 1} / {chapter.lessons.length}</span><h2>{current.title}</h2>{current.paragraphs.map((p, i) => <p key={i}>{p}</p>)}<div className="actions"><button disabled={lesson === 0} onClick={() => setLesson(i => i - 1)}>上一张</button><button className="primary" onClick={() => { setRead(r => r.includes(current.id) ? r : [...r, current.id]); if (lesson < chapter.lessons.length - 1)
+        setLesson(i => i + 1);
+    else
+        setTesting(true); }}>读完，{lesson < chapter.lessons.length - 1 ? '下一张' : '开始测验'} →</button></div></article></div> : quiz.submitted ? <section className="panel"><h2>答对 {score(chapter.questions, quiz)} / {chapter.questions.length} 题</h2><p>可以继续阅读其他章节，也可以展开查看错题。</p><details><summary>查看答案与解析</summary><label className="check"><input type="checkbox" checked={wrongOnly} onChange={e => setWrongOnly(e.target.checked)}/>只看错题</label>{chapter.questions.filter(item => !wrongOnly || quiz.answers[item.id] !== item.answer).map(item => <article className="review" key={item.id}><h3>{quiz.answers[item.id] === item.answer ? '✓ 答对' : '× 答错'} · {item.prompt}</h3><p>你的答案：{item.options[quiz.answers[item.id]]}</p><p>正确答案：{item.options[item.answer]}</p><p className="muted">{item.explanation}</p></article>)}{wrongOnly && score(chapter.questions, quiz) === chapter.questions.length && <p>全部答对，没有错题。</p>}</details><button onClick={() => { setQuiz(emptyQuiz()); setWrongOnly(false); }}>重新测试</button></section> : <section className="panel"><p>第 {quiz.cursor + 1} / {chapter.questions.length} 题 · 已答 {Object.keys(quiz.answers).length} 题</p><progress aria-label="作答进度" value={Object.keys(quiz.answers).length} max={chapter.questions.length}/><h2 ref={heading} tabIndex={-1}>{q.prompt}</h2><fieldset key={q.id}><legend className="sr-only">选择答案</legend>{q.options.map((option, i) => <label className="option" key={option}><input type="radio" name={q.id} checked={quiz.answers[q.id] === i} onChange={() => setQuiz(s => answerAndAdvance(chapter.questions, s, q.id, i))}/>{option}</label>)}</fieldset><nav className="answer-map" aria-label="答题卡">{chapter.questions.map((item, i) => <button key={item.id} aria-label={`第${i + 1}题${quiz.answers[item.id] !== undefined ? '，已答' : ''}`} aria-current={i === quiz.cursor ? 'step' : undefined} onClick={() => setQuiz(s => ({ ...s, cursor: i }))}>{i + 1}{quiz.answers[item.id] !== undefined ? ' ✓' : ''}</button>)}</nav><p className="muted">选中后自动跳到下一道未答题，答完后再提交。可点击题号修改。</p><button className="primary" disabled={!isComplete(chapter.questions, quiz)} onClick={() => setQuiz(s => ({ ...s, submitted: true }))}>提交答案</button></section>}</>;
+}
+function Learn() { const [chapterId, setChapterId] = useState(chapters[0].id); const chapter = chapters.find(c => c.id === chapterId)!; return <><div className="section-heading"><div><span className="eyebrow">按自己的进度阅读</span><h1>学习课程</h1></div><p>阅读和答题记录保存在当前浏览器。</p></div><div className="tabs" aria-label="选择篇章">{chapters.map(c => <button key={c.id} aria-pressed={c.id === chapterId} onClick={() => setChapterId(c.id)}>{c.title}</button>)}</div><p>{chapter.summary}</p><ChapterReader key={chapter.id} chapter={chapter}/></>; }
+function Team() {
+    const [team, setTeam] = useState(defaultTeam);
+    return <><div className="section-heading"><div><span className="eyebrow">可替换的成员卡片</span><h1>组建探索小队</h1></div><p>仅演示固定核心与替补交互，不含游戏配队规则。</p></div><div className="grid team">{team.map((id, index) => { const member = members.find(m => m.id === id)!; return <article className="panel" key={index}><span className="tag">{index === 0 ? '核心 · 固定' : `队员 ${index}`}</span><h2>{member.name}</h2><p>{member.role}</p>{index === 0 ? <p className="muted">核心位置不可更换</p> : <label>更换队员<select value={id} onChange={e => setTeam(t => t.map((x, i) => i === index ? e.target.value : x))}>{members.filter(m => m.id === id || !team.includes(m.id)).map(m => <option value={m.id} key={m.id}>{m.name} · {m.role}</option>)}</select></label>}</article>; })}</div><button onClick={() => setTeam([...defaultTeam])}>恢复示例小队</button></>;
+}
+function Contribute() {
+    const [stored, setStored, failed] = useStored('wiki-demo:draft', emptyDraft, restoreDraft);
+    const [draft, setDraft] = useState(stored), [notice, setNotice] = useState('');
+    function exportDraft() { const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'community-draft.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    return <><div className="section-heading"><div><span className="eyebrow">把建议写清楚</span><h1>共创草稿</h1></div><p>本演示只保存本地草稿，不会提交审核。</p></div><SaveWarning show={failed}/><form className="panel form" onSubmit={e => { e.preventDefault(); setStored(draft); setNotice('已尝试保存到当前浏览器；如保存失败，下方会显示提示。'); }}><label>标题<input required maxLength={80} value={draft.title} onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}/></label><label>内容<textarea required rows={7} maxLength={4000} value={draft.body} onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}/></label><label>依据或来源<textarea rows={2} maxLength={500} value={draft.source} onChange={e => setDraft(d => ({ ...d, source: e.target.value }))}/></label><div className="actions"><button className="primary" type="submit">保存本地草稿</button><button type="button" onClick={exportDraft}>导出草稿</button></div><p role="status">{notice}</p></form><aside className="notice">正式站点的账号、审核通知和云端投稿需要另行接入服务；此处没有模拟“投稿成功”。</aside></>;
+}
+function App() {
+    const [route, setRoute] = useState(routeIndex);
+    useEffect(() => { const update = () => setRoute(routeIndex()); window.addEventListener('hashchange', update); return () => window.removeEventListener('hashchange', update); }, []);
+    return <><a className="skip" href="#content" onClick={e => { e.preventDefault(); document.getElementById('content')?.focus(); }}>跳到正文</a><header className="site-header"><a className="brand" href="#atlas">社区百科<span>FRAMEWORK DEMO</span></a><nav aria-label="主导航">{routes.map((name, i) => <a href={'#' + routeKeys[i]} key={name} aria-current={route === i ? 'page' : undefined}>{name}</a>)}</nav></header><main id="content" tabIndex={-1} key={route}>{route === 0 ? <Atlas /> : route === 1 ? <Learn /> : route === 2 ? <Team /> : <Contribute />}</main><footer>百科框架演示 · 全部示例资料为虚构 · 无图片、音视频或模型素材</footer></>;
+}
+createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);

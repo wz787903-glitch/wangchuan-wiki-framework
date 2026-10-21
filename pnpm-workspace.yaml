@@ -1,0 +1,6 @@
+packages:
+  - .
+storeDir: node_modules/.store
+nodeLinker: hoisted
+enableGlobalVirtualStore: false
+verifyDepsBeforeRun: false
